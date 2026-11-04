@@ -5,8 +5,8 @@
 [![license](https://img.shields.io/github/license/refenv/gha-trim-runner)](LICENSE)
 [![REUSE](https://img.shields.io/badge/REUSE-compliant-green)](https://reuse.software/)
 
-Make room on a GitHub-hosted runner for your container job, by removing the
-tooling the runner brings and your container never uses.
+Free disk space for your container job by removing the tooling preinstalled on
+the GitHub-hosted runner's host.
 
 ```yaml
 jobs:
@@ -22,8 +22,8 @@ jobs:
 
 A container job brings its own toolchain in its image. The runner underneath
 still carries tens of GiB of its own, Android, .NET, GHC, Swift, the JVMs and
-more, and the container uses none of it: the host only has to start the
-container and run GitHub's runner. That tooling takes the room the image, and
+more, which the job does not use: the host only has to start the container
+and run GitHub's runner. That tooling takes the room the image, and
 what the job builds and runs in it, need, and how much is left differs from
 runner to runner, so a job that fits on one runs out of space on the next.
 This action removes the runner's tooling from the host, flavour by flavour,

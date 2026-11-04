@@ -1,8 +1,7 @@
 name: Trim runner
 description: >-
-  Make room on a GitHub-hosted runner for a container job, by removing the
-  tooling the runner preinstalls, which the job's container never uses, from
-  the host underneath it
+  Free disk space for your container job by removing the tooling preinstalled
+  on the GitHub-hosted runner's host
 branding:
   icon: trash-2
   color: gray-dark

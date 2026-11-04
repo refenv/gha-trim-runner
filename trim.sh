@@ -6,7 +6,7 @@
 #
 # Only in a container job: there the job brings its own tooling in its image, and the
 # host needs only to start the container and run GitHub's runner. A job on the runner
-# itself may be using that tooling, so it is never trimmed.
+# itself may be using that tooling, so it is left alone.
 #
 # Inputs, from the environment:
 #   TRIM_NEED_GIB  trim, flavour by flavour, only until the runner's disk has this many
@@ -129,6 +129,7 @@ cloud() {
 
 where="the host underneath this container job"
 removed=()
+summary_host=""
 
 before=$(kib "$TRIM_PATH")
 size=$(df -Pk "$TRIM_PATH" | awk 'NR == 2 { print $2 }')
@@ -145,7 +146,7 @@ finish() {
 	output removed "${removed[*]}"
 	summary "### gha-trim-runner"
 	summary ""
-	summary "$note"
+	summary "$note${summary_host:+ Host: ${summary_host}.}"
 	summary ""
 	summary "| | Free at \`${TRIM_PATH}\` |"
 	summary "| --- | ---: |"
@@ -173,6 +174,69 @@ if [ "$hosted" = "false" ] && [ "$TRIM_DRY_RUN" != "true" ]; then
 	echo "::notice title=gha-trim-runner::nothing trimmed, as ${why}"
 	finish "$before" false "Nothing was trimmed, as ${why}."
 	exit 0
+fi
+
+# The host's Docker Engine, through the socket GitHub mounts into a container job; its
+# API, by curl, rather than a docker client, which the job's image may lack or have
+# as another engine's, such as podman's
+engine() {
+	local method=$1 path=$2 body=${3:-}
+	if [ -n "$body" ]; then
+		curl -sf --unix-socket /var/run/docker.sock -X "$method" \
+			-H "Content-Type: application/json" -d "$body" "http://engine${path}"
+	else
+		curl -sf --unix-socket /var/run/docker.sock -X "$method" "http://engine${path}"
+	fi
+}
+
+json_string() {
+	local s=$1
+	s=${s//\\/\\\\}
+	s=${s//\"/\\\"}
+	s=${s//$'\n'/\\n}
+	s=${s//$'\t'/\\t}
+	printf '"%s"' "$s"
+}
+
+# Run a script in a container of the job's own image, with the host's root at /host,
+# printing what it prints; returns its exit status
+host_run() {
+	local script=$1 image cmd arg helper
+	shift
+	image=$(engine GET "/containers/${TRIM_CONTAINER_ID}/json" \
+		| grep -o '"Image":"sha256:[0-9a-f]*"' | head -n1 | cut -d'"' -f4) || return 1
+	[ -n "$image" ] || return 1
+	cmd="[\"sh\",\"-c\",$(json_string "$script"),\"sh\""
+	for arg in "$@"; do
+		cmd+=",$(json_string "$arg")"
+	done
+	cmd+="]"
+	helper=$(engine POST /containers/create \
+		"{\"Image\":\"${image}\",\"Entrypoint\":[],\"Cmd\":${cmd},\"Tty\":true,\"HostConfig\":{\"Binds\":[\"/:/host\"]}}" \
+		| grep -o '"Id":"[0-9a-f]*"' | cut -d'"' -f4) || return 1
+	[ -n "$helper" ] || return 1
+	local code=1
+	if engine POST "/containers/${helper}/start" > /dev/null; then
+		code=$(engine POST "/containers/${helper}/wait" | grep -o '"StatusCode":[0-9]*' | cut -d: -f2)
+		engine GET "/containers/${helper}/logs?stdout=1&stderr=1" | tr -d '\r'
+	fi
+	engine DELETE "/containers/${helper}?force=1" > /dev/null || true
+	return "${code:-1}"
+}
+
+# What the host is, for the log: the runner image, its kernel and Docker Engine
+# shellcheck disable=SC2016 # expanded by the shell that runs it
+probe='
+grep -E "^Image(OS|Version)=" /host/etc/environment 2>/dev/null | cut -d= -f2 | tr "\n" " "
+echo "kernel $(uname -r)"
+'
+reachable=false
+if [ -n "$TRIM_CONTAINER_ID" ] && engine GET /version > /dev/null 2>&1; then
+	reachable=true
+	host=$(host_run "$probe" || true)
+	engine_version=$(engine GET /version | grep -o '"Version":"[^"]*"' | head -n1 | cut -d'"' -f4)
+	echo "  Host: ${host:-unknown image}, Docker Engine ${engine_version:-unknown}, runner ${TRIM_RUNNER_NAME}"
+	summary_host="${host:-unknown image}, Docker Engine ${engine_version:-unknown}"
 fi
 
 if [ -n "$TRIM_NEED_GIB" ] && [ "$before" -ge $((TRIM_NEED_GIB * 1048576)) ]; then
@@ -231,58 +295,12 @@ for flavour in "${removing[@]}"; do
 	args+=("$flavour" "${flavour_paths[$flavour]}")
 done
 
-# The host's Docker Engine, through the socket GitHub mounts into a container job; its
-# API, by curl, rather than a docker client, which the job's image may lack or have
-# as another engine's, such as podman's
-engine() {
-	local method=$1 path=$2 body=${3:-}
-	if [ -n "$body" ]; then
-		curl -sf --unix-socket /var/run/docker.sock -X "$method" \
-			-H "Content-Type: application/json" -d "$body" "http://engine${path}"
-	else
-		curl -sf --unix-socket /var/run/docker.sock -X "$method" "http://engine${path}"
-	fi
-}
-
-json_string() {
-	local s=$1
-	s=${s//\\/\\\\}
-	s=${s//\"/\\\"}
-	s=${s//$'\n'/\\n}
-	s=${s//$'\t'/\\t}
-	printf '"%s"' "$s"
-}
-
-# Run the removal in a container of the job's own image, with the host's root mounted
-remove_on_host() {
-	local image cmd arg helper
-	image=$(engine GET "/containers/${TRIM_CONTAINER_ID}/json" \
-		| grep -o '"Image":"sha256:[0-9a-f]*"' | head -n1 | cut -d'"' -f4) || return 1
-	[ -n "$image" ] || return 1
-	cmd="[\"sh\",\"-c\",$(json_string "$remove_script"),\"sh\",\"/host\",\"${need_kib}\""
-	for arg in "$@"; do
-		cmd+=",$(json_string "$arg")"
-	done
-	cmd+="]"
-	helper=$(engine POST /containers/create \
-		"{\"Image\":\"${image}\",\"Entrypoint\":[],\"Cmd\":${cmd},\"Tty\":true,\"HostConfig\":{\"Binds\":[\"/:/host\"]}}" \
-		| grep -o '"Id":"[0-9a-f]*"' | cut -d'"' -f4) || return 1
-	[ -n "$helper" ] || return 1
-	local code=1
-	if engine POST "/containers/${helper}/start" > /dev/null; then
-		code=$(engine POST "/containers/${helper}/wait" | grep -o '"StatusCode":[0-9]*' | cut -d: -f2)
-		engine GET "/containers/${helper}/logs?stdout=1&stderr=1" | tr -d '\r'
-	fi
-	engine DELETE "/containers/${helper}?force=1" > /dev/null || true
-	return "${code:-1}"
-}
-
-if [ -z "$TRIM_CONTAINER_ID" ] || ! command -v curl > /dev/null \
-	|| ! engine GET /version > /dev/null; then
+if [ "$reachable" != "true" ]; then
 	echo "::warning::cannot reach the host's Docker Engine through /var/run/docker.sock; nothing trimmed"
 	finish "$before" false "The host's Docker Engine was not reachable, so nothing was trimmed."
 	exit 0
 fi
+
 
 echo "  Removing from ${where}:"
 rows=()
@@ -290,7 +308,7 @@ removed=()
 started=$(date +%s)
 status=0
 log=$(mktemp)
-remove_on_host "${args[@]}" > "$log" || status=$?
+host_run "$remove_script" /host "$need_kib" "${args[@]}" > "$log" || status=$?
 grep -v '^[a-z]* -\?[0-9]*$' "$log" >&2 || true
 while read -r flavour freed; do
 	printf '    %-11s %7s GiB  %s\n' "$flavour" "$(gib "$freed")" "${flavour_paths[$flavour]}"
