@@ -3,6 +3,13 @@
 Each release has a section here, named by its version, such as `## 1.0.0`;
 that section is the text of its release on GitHub.
 
+## 1.1.0
+
+The log names the host: its runner image, kernel and Docker Engine, read from
+the host itself, as the image is not visible from inside the container. The
+action now describes itself by what it gives: free disk space for a container
+job.
+
 ## 1.0.0
 
 The first release. It trims the tooling a GitHub-hosted runner preinstalls from
