@@ -1,0 +1,4 @@
+# Runner labels newer than the actionlint that checks them
+self-hosted-runner:
+  labels:
+  - ubuntu-26.04

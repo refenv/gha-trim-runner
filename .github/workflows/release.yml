@@ -1,0 +1,83 @@
+---
+name: release
+
+# A commit on main with the subject 'ver: bump to vX.Y.Z' releases X.Y.Z, once the
+# test workflow passed on it: its VERSION is X.Y.Z, CHANGELOG.md has a '## X.Y.Z'
+# section, which is the release's notes, and the release tags vX.Y.Z and moves vX,
+# the tag users pin, to it
+on:
+  workflow_run:
+    workflows: [test]
+    types: [completed]
+    branches: [main]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && startsWith(github.event.workflow_run.head_commit.message, 'ver: bump to v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      SUBJECT: ${{ github.event.workflow_run.head_commit.message }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
+        fetch-depth: 0
+
+    - name: Check the version, and write the release notes
+      id: version
+      run: |
+        subject=$(head -n1 <<< "$SUBJECT")
+        if ! [[ "$subject" =~ ^ver:\ bump\ to\ v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          echo "::error::not a version bump: '$subject'"
+          exit 1
+        fi
+        version=${BASH_REMATCH[1]}
+        if [ "$(cat VERSION)" != "$version" ]; then
+          echo "::error::the commit bumps to $version, but VERSION is '$(cat VERSION)'"
+          exit 1
+        fi
+        awk -v v="## $version" '$0 == v { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md \
+          > "$RUNNER_TEMP/notes.md"
+        if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+          echo "::error::CHANGELOG.md has no '## $version' section"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+
+    - name: Tag and create the release
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        if git rev-parse -q --verify "refs/tags/v$VERSION" > /dev/null; then
+          if [ "$(git rev-parse "v$VERSION^{commit}")" != "$SHA" ]; then
+            echo "::error::v$VERSION is a tag of another commit"
+            exit 1
+          fi
+        fi
+        if ! gh release view "v$VERSION" --repo "$REPO" > /dev/null 2>&1; then
+          gh release create "v$VERSION" --repo "$REPO" --target "$SHA" \
+            --title "v$VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+        fi
+
+    - name: Move the major tag to the release
+      env:
+        MAJOR: ${{ steps.version.outputs.major }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git tag -f "v$MAJOR" "$SHA"
+        git push -f origin "refs/tags/v$MAJOR"

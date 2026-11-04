@@ -1,0 +1,97 @@
+name: Trim runner
+description: >-
+  Make room on a GitHub-hosted runner for a container job, by removing the
+  tooling the runner preinstalls, which the job's container never uses, from
+  the host underneath it
+branding:
+  icon: trash-2
+  color: gray-dark
+
+inputs:
+  need-gib:
+    description: Trim flavour by flavour, the largest first, only until the runner's disk has this many GiB free; empty trims every flavour
+    required: false
+    default: ''
+  extra:
+    description: More paths on the host to remove, one per line
+    required: false
+    default: ''
+  android:
+    description: Remove Android SDK and NDK
+    required: false
+    default: 'true'
+  dotnet:
+    description: Remove .NET
+    required: false
+    default: 'true'
+  haskell:
+    description: Remove GHC and GHCup
+    required: false
+    default: 'true'
+  swift:
+    description: Remove Swift
+    required: false
+    default: 'true'
+  powershell:
+    description: Remove PowerShell
+    required: false
+    default: 'true'
+  chromium:
+    description: Remove Chromium
+    required: false
+    default: 'true'
+  java:
+    description: Remove the JVMs
+    required: false
+    default: 'true'
+  codeql:
+    description: Remove CodeQL
+    required: false
+    default: 'true'
+  microsoft:
+    description: Remove Edge and the other tools under /opt/microsoft
+    required: false
+    default: 'true'
+  dry-run:
+    description: List what would be removed, and remove nothing
+    required: false
+    default: 'false'
+
+outputs:
+  avail-gib-before:
+    description: GiB free on the runner's disk before, such as 21.4
+    value: ${{ steps.trim.outputs.avail-gib-before }}
+  avail-gib-after:
+    description: GiB free on the runner's disk after
+    value: ${{ steps.trim.outputs.avail-gib-after }}
+  removed:
+    description: The flavours removed, separated by spaces, such as 'android dotnet'
+    value: ${{ steps.trim.outputs.removed }}
+  trimmed:
+    description: Whether anything was trimmed, 'true' or 'false'
+    value: ${{ steps.trim.outputs.trimmed }}
+
+runs:
+  using: composite
+  steps:
+  - name: Trim
+    id: trim
+    shell: bash
+    env:
+      TRIM_NEED_GIB: ${{ inputs.need-gib }}
+      TRIM_EXTRA: ${{ inputs.extra }}
+      TRIM_DRY_RUN: ${{ inputs.dry-run }}
+      TRIM_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+      TRIM_RUNNER_NAME: ${{ runner.name }}
+      TRIM_CONTAINER_ID: ${{ job.container.id }}
+      TRIM_ANDROID: ${{ inputs.android }}
+      TRIM_DOTNET: ${{ inputs.dotnet }}
+      TRIM_HASKELL: ${{ inputs.haskell }}
+      TRIM_SWIFT: ${{ inputs.swift }}
+      TRIM_POWERSHELL: ${{ inputs.powershell }}
+      TRIM_CHROMIUM: ${{ inputs.chromium }}
+      TRIM_JAVA: ${{ inputs.java }}
+      TRIM_CODEQL: ${{ inputs.codeql }}
+      TRIM_MICROSOFT: ${{ inputs.microsoft }}
+    # GITHUB_ACTION_PATH, unlike github.action_path, is the container's path in a container job
+    run: '"$GITHUB_ACTION_PATH/trim.sh"'

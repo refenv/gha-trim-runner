@@ -1,0 +1,185 @@
+---
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+# The container jobs run in the host image of xnvme-devenv, the environment this action
+# exists for: a job that brings its own tooling, and the guests and disk images it boots.
+# They run on every x64 Ubuntu image GitHub hosts, as what each preinstalls differs.
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: Check the script
+      run: shellcheck trim.sh
+    - name: Check the workflows
+      uses: docker://rhysd/actionlint:1.7.12
+      with:
+        args: -color
+    - name: Check REUSE compliance
+      uses: fsfe/reuse-action@v6
+
+  # Trim every flavour from the host underneath a container job
+  trim:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      options: --privileged -v /mnt:/mnt
+    steps:
+    - uses: actions/checkout@v7
+    - name: Trim
+      id: trim
+      uses: ./
+    - name: Check the trim
+      env:
+        BEFORE: ${{ steps.trim.outputs.avail-gib-before }}
+        AFTER: ${{ steps.trim.outputs.avail-gib-after }}
+        TRIMMED: ${{ steps.trim.outputs.trimmed }}
+        REMOVED: ${{ steps.trim.outputs.removed }}
+      run: |
+        echo "before: $BEFORE GiB, after: $AFTER GiB, trimmed: $TRIMMED"
+        [ "$TRIMMED" = "true" ]
+        awk -v a="$AFTER" -v b="$BEFORE" 'BEGIN { exit !(a > b) }'
+        [[ " $REMOVED " == *" android "* ]]
+        [[ " $REMOVED " == *" dotnet "* ]]
+
+  # As an xnvme-devenv job asks for it: room for a guest and its disk images, from the
+  # largest flavours first
+  devenv:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      options: --privileged -v /mnt:/mnt
+    steps:
+    - uses: actions/checkout@v7
+    - name: Trim until 50 GiB are free
+      id: trim
+      uses: ./
+      with:
+        need-gib: '50'
+    # An AWS-hosted runner's disk may not hold 50 GiB free even trimmed; the action
+    # warns then, and what it can be held to is trimming, largest first, or the need
+    # having been met already
+    - name: Check it trimmed the largest first, or had room already
+      env:
+        BEFORE: ${{ steps.trim.outputs.avail-gib-before }}
+        AFTER: ${{ steps.trim.outputs.avail-gib-after }}
+        TRIMMED: ${{ steps.trim.outputs.trimmed }}
+        REMOVED: ${{ steps.trim.outputs.removed }}
+      run: |
+        echo "before: $BEFORE GiB, after: $AFTER GiB, removed: $REMOVED"
+        df -h / /mnt
+        if [ "$TRIMMED" = "true" ]; then
+          awk -v a="$AFTER" -v b="$BEFORE" 'BEGIN { exit !(a > b) }'
+          [[ "$REMOVED" == "android"* ]]
+        else
+          awk -v b="$BEFORE" 'BEGIN { exit !(b >= 50) }'
+        fi
+
+  # A flavour set to false is kept, and the others are trimmed
+  keep:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      options: --privileged -v /mnt:/mnt
+    steps:
+    - uses: actions/checkout@v7
+    - name: Trim all but .NET
+      id: trim
+      uses: ./
+      with:
+        dotnet: 'false'
+    - name: Check .NET is kept and Android is not
+      env:
+        REMOVED: ${{ steps.trim.outputs.removed }}
+      run: |
+        [[ " $REMOVED " == *" android "* ]]
+        [[ " $REMOVED " != *" dotnet "* ]]
+
+  # With the need met already, nothing is trimmed
+  enough:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      options: --privileged -v /mnt:/mnt
+    steps:
+    - uses: actions/checkout@v7
+    - name: Trim
+      id: trim
+      uses: ./
+      with:
+        need-gib: '1'
+    - name: Check nothing was trimmed
+      run: |
+        [ "${{ steps.trim.outputs.trimmed }}" = "false" ]
+        [ -z "${{ steps.trim.outputs.removed }}" ]
+
+  # A dry run lists what it would remove, and removes nothing
+  dry-run:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      options: --privileged -v /mnt:/mnt
+    steps:
+    - uses: actions/checkout@v7
+    - name: Trim, as a dry run
+      id: trim
+      uses: ./
+      with:
+        dry-run: 'true'
+    - name: Check nothing was removed
+      run: |
+        [ "${{ steps.trim.outputs.trimmed }}" = "false" ]
+        [ -z "${{ steps.trim.outputs.removed }}" ]
+
+  # Outside a container job on a GitHub-hosted runner, nothing is trimmed
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - name: In a job on the runner itself
+      id: host
+      uses: ./
+    # On the command line, as the runner sets GITHUB_OUTPUT over a step's env
+    - name: As on a self-hosted runner
+      run: TRIM_RUNNER_ENVIRONMENT=self-hosted GITHUB_OUTPUT=/tmp/self.out ./trim.sh
+    - name: As on a runner named by its owner
+      run: >-
+        TRIM_RUNNER_ENVIRONMENT=github-hosted TRIM_RUNNER_NAME=build-box
+        GITHUB_OUTPUT=/tmp/name.out ./trim.sh
+    - name: Check nothing was removed
+      run: |
+        [ "${{ steps.host.outputs.trimmed }}" = "false" ]
+        grep -qx 'trimmed=false' /tmp/self.out
+        grep -qx 'trimmed=false' /tmp/name.out
+        [ -e /usr/share/dotnet ]
+        [ -e /usr/local/lib/android ]
