@@ -11,7 +11,7 @@ defaults:
   run:
     shell: bash
 
-# The container jobs run in the host image of xnvme-devenv, the environment this action
+# The container jobs run in the host image of systems-devenv, the environment this action
 # exists for: a job that brings its own tooling, and the guests and disk images it boots.
 # They run on every x64 Ubuntu image GitHub hosts, as what each preinstalls differs.
 jobs:
@@ -36,7 +36,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: actions/checkout@v7
@@ -56,7 +56,7 @@ jobs:
         [[ " $REMOVED " == *" android "* ]]
         [[ " $REMOVED " == *" dotnet "* ]]
 
-  # As an xnvme-devenv job asks for it: room for a guest and its disk images, from the
+  # As a systems-devenv job asks for it: room for a guest and its disk images, from the
   # largest flavours first
   devenv:
     strategy:
@@ -65,7 +65,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: actions/checkout@v7
@@ -101,7 +101,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: actions/checkout@v7
@@ -125,7 +125,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: actions/checkout@v7
@@ -147,7 +147,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-24.04, ubuntu-26.04]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: actions/checkout@v7
