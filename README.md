@@ -13,7 +13,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/xnvme/xnvme-devenv/host:v0.15.0
+      image: ghcr.io/refenv/systems-devenv/host:v0.19.0
       options: --privileged -v /mnt:/mnt
     steps:
     - uses: refenv/gha-trim-runner@v1
@@ -132,10 +132,10 @@ image, so that image needs `bash`, `curl`, `awk`, `grep`, `df`, `cut`, `tr`,
 action checks for them before anything else, and fails naming any that are
 missing. It talks to the host's Docker Engine API over the socket with `curl`
 rather than a docker client, which an image may lack, or have as another
-engine's: the `docker` in xnvme-devenv's host image is podman's.
+engine's: the `docker` in systems-devenv's host image is podman's.
 
 The action is tested in the host image of
-[xnvme-devenv](https://github.com/xnvme/xnvme-devenv), the environment it was
+[systems-devenv](https://github.com/refenv/systems-devenv), the environment it was
 made for: a container with its own toolchain, which boots QEMU guests whose
 disk images take tens of GiB. It is tested on `ubuntu-22.04`, `ubuntu-24.04`
 and `ubuntu-26.04`, as what each runner image preinstalls differs.
